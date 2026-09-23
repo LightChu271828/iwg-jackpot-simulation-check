@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>IWG Jackpot simulation check</title>
+<meta name="description" content="Check an egames jackpot simulation dump against PPS settings. Runs in the browser." />
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-soft: #f6f7f9;
+    --bg-inset: #eceef1;
+    --text: #16181d;
+    --text-dim: #5b6270;
+    --text-faint: #8a919e;
+    --line: #dfe2e7;
+    --line-soft: #eaecf0;
+    --accent: #2f6feb;
+    --ok: #1a7f4b;
+    --warn: #a86300;
+    --bad: #b4291f;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --bg-soft: #1b1e23;
+      --bg-inset: #23262c;
+      --text: #e6e8ec;
+      --text-dim: #a2a9b6;
+      --text-faint: #737b88;
+      --line: #2c3037;
+      --line-soft: #23262c;
+      --accent: #5c93ff;
+      --ok: #4ec98a;
+      --warn: #e0a34a;
+      --bad: #f06a5f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 28px 22px 72px; }
+  h1 { font-size: 21px; margin: 0 0 6px; font-weight: 650; letter-spacing: -0.01em; }
+  h2 { font-size: 15px; margin: 34px 0 10px; font-weight: 620; }
+  p { margin: 0 0 10px; color: var(--text-dim); }
+  code, .mono { font-family: var(--mono); font-size: 0.92em; }
+  .topbar { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .topbar > div:first-child { flex: 1 1 420px; min-width: 0; }
+  .btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  button, .filebtn {
+    font: inherit; font-size: 12.5px; padding: 5px 11px; border-radius: 5px;
+    border: 1px solid var(--line); background: var(--bg-soft); color: var(--text);
+    cursor: pointer;
+  }
+  button:hover, .filebtn:hover { border-color: var(--text-faint); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  .panel { border: 1px solid var(--line); border-radius: 8px; background: var(--bg-soft); }
+  .panel-h {
+    padding: 8px 13px; border-bottom: 1px solid var(--line); font-size: 12px;
+    color: var(--text-dim); display: flex; justify-content: space-between; gap: 12px;
+  }
+  .panel-b { padding: 14px; }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 13px; }
+  label.field { display: block; }
+  label.field > span { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 4px; }
+  label.field > span b { color: var(--text); font-weight: 600; }
+  input[type=number], input[type=text] {
+    width: 100%; font: inherit; font-size: 13px; padding: 5px 8px;
+    border: 1px solid var(--line); border-radius: 5px;
+    background: var(--bg); color: var(--text);
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  .hint { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
+  .files { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 720px) { .files { grid-template-columns: 1fr; } }
+  .drop {
+    border: 1px dashed var(--line); border-radius: 8px; padding: 12px;
+    background: var(--bg); min-height: 78px;
+  }
+  .drop strong { display: block; font-size: 13px; margin-bottom: 2px; }
+  .drop .name { font-family: var(--mono); font-size: 12px; margin-top: 6px; word-break: break-all; }
+  input[type=file] { display: none; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .stat { background: var(--bg-soft); padding: 11px 13px; }
+  .stat .v { font-size: 19px; font-weight: 620; letter-spacing: -0.015em; font-variant-numeric: tabular-nums; }
+  .stat .l { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
+  .stat .v.ok { color: var(--ok); } .stat .v.bad { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font-weight: 600; color: var(--text-dim); font-size: 11.5px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+  .scroll { max-height: 440px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+  .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--text-dim); }
+  .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+  .note { border-left: 2px solid var(--line); padding: 2px 0 2px 12px; color: var(--text-dim); font-size: 12.5px; }
+  .note.bad { border-color: var(--bad); }
+  .note b { color: var(--text); }
+  .jp-table input { font-family: var(--mono); font-size: 12.5px; }
+  .choices { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .report {
+    white-space: pre-wrap; font-family: var(--mono); font-size: 12px; line-height: 1.45;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+    max-height: 420px; overflow: auto;
+  }
+  .runrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <h1>IWG Jackpot simulation check</h1>
+      <p style="margin:0">
+        Upload an egames jackpot dump and the PPS settings. The page runs the same checks as the Java checker.
+        Nothing is uploaded. A small-sample rtp-test workbook is not this file.
+      </p>
+    </div>
+    <div class="btnrow">
+      <button id="download" disabled>Download report</button>
+    </div>
+  </div>
+
+  <h2>Files</h2>
+  <div class="panel">
+    <div class="panel-b">
+      <div class="files">
+        <div class="drop" id="dumpDrop">
+          <strong>Simulation dump</strong>
+          <span class="hint">The egames .txt report, one block per stake.</span>
+          <div class="name" id="dumpName">No file yet</div>
+          <label class="filebtn" style="display:inline-block;margin-top:8px">Choose file<input id="dumpFile" type="file" accept=".txt,text/plain" /></label>
+        </div>
+        <div class="drop" id="ppsDrop">
+          <strong>PPS workbook</strong>
+          <span class="hint">Optional. Fills the fields below from Summary and Progressive Jackpots. Check them before running.</span>
+          <div class="name" id="ppsName">No file yet</div>
+          <label class="filebtn" style="display:inline-block;margin-top:8px">Choose file<input id="ppsFile" type="file" accept=".xlsx" /></label>
+        </div>
+      </div>
+      <div id="ppsChoices" class="choices"></div>
+      <p id="ppsNote" class="hint" style="margin:10px 0 0"></p>
+    </div>
+  </div>
+
+  <h2>Settings</h2>
+  <div class="panel">
+    <div class="panel-h"><span>Same arguments as the checker</span><span>Small JP to large JP, in file order</span></div>
+    <div class="panel-b">
+      <div class="controls">
+        <label class="field"><span><b>Main game RTP</b></span><input id="mainRtp" type="number" step="any" value="0.83" /></label>
+        <label class="field"><span><b>Std. Dev.</b></span><input id="stdDev" type="number" step="any" value="4.22" /></label>
+        <label class="field"><span><b>Seed RTP</b></span><input id="seedRtp" type="number" step="any" value="0.004" /></label>
+        <label class="field"><span><b>Contribution RTP</b></span><input id="contributionRtp" type="number" step="any" value="0.036" /></label>
+        <label class="field"><span><b>Odds down</b></span><input id="oddsDown" type="number" step="any" value="50000000" /></label>
+      </div>
+      <div class="scroll" style="margin-top:14px">
+        <table class="jp-table">
+          <thead>
+            <tr>
+              <th>File order</th>
+              <th class="num">Odds up</th>
+              <th class="num">Seed</th>
+              <th class="num">Trigger target</th>
+            </tr>
+          </thead>
+          <tbody id="jpRows"></tbody>
+        </table>
+      </div>
+      <div class="hint">Trigger target is the expected prize, not the expected hit count. Expected JPx Wins in the report is this target and is not a scored test.</div>
+      <div class="runrow">
+        <button class="primary" id="run" disabled>Run check</button>
+        <span class="hint" id="runHint">Choose a dump first.</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="error" class="note bad hidden" style="margin-top:16px"></div>
+
+  <h2>Result</h2>
+  <div id="empty" class="note">No check yet.</div>
+  <div id="result" class="hidden">
+    <div class="stats" id="stats"></div>
+    <h2>By stake</h2>
+    <div class="scroll"><table id="wagerTable"></table></div>
+    <h2>Fails</h2>
+    <div id="fails" class="note">None.</div>
+    <h2>Checker report</h2>
+    <div class="report" id="report"></div>
+  </div>
+</div>
+<script src="check.js"></script>
+<script>
+var dumpText = "";
+var lastReport = "";
+var jpCount = 2;
+
+function $(id) { return document.getElementById(id); }
+
+function renderJpRows(names) {
+  var old = readJps();
+  var n = names ? names.length : Math.max(old.length, 2);
+  jpCount = n;
+  var body = $("jpRows");
+  body.innerHTML = "";
+  for (var i = 0; i < n; i++) {
+    var prev = old[i] || { oddsUp: "", seed: "", target: "" };
+    var tr = document.createElement("tr");
+    var label = names && names[i] ? ("JP" + i + " " + names[i]) : ("JP" + i);
+    tr.innerHTML = "<td>" + escapeHtml(label) + "</td>"
+      + numCell("odds", prev.oddsUp)
+      + numCell("seed", prev.seed)
+      + numCell("target", prev.target);
+    body.appendChild(tr);
+  }
+}
+
+function numCell(kind, value) {
+  return '<td class="num"><input data-kind="' + kind + '" type="text" inputmode="decimal" value="' + escapeHtml(value === undefined || value === null ? "" : String(value)) + '" /></td>';
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+  });
+}
+
+function readJps() {
+  var rows = $("jpRows").querySelectorAll("tr");
+  var out = [];
+  rows.forEach(function (tr) {
+    var inputs = tr.querySelectorAll("input");
+    out.push({ oddsUp: inputs[0].value, seed: inputs[1].value, target: inputs[2].value });
+  });
+  return out;
+}
+
+function num(text) {
+  var value = parseFloat(String(text).replace(/,/g, "").trim());
+  if (!isFinite(value)) throw new Error("Need a number, got \"" + text + "\"");
+  return value;
+}
+
+function showError(message) {
+  var box = $("error");
+  if (!message) { box.classList.add("hidden"); box.textContent = ""; return; }
+  box.textContent = message;
+  box.classList.remove("hidden");
+}
+
+function setDump(name, text) {
+  dumpText = text;
+  $("dumpName").textContent = name;
+  try {
+    var parsed = SimCheck.parseDump(text);
+    renderJpRows(parsed.names);
+    $("run").disabled = false;
+    $("runHint").textContent = parsed.wagers.length + " stakes, " + parsed.names.length + " jackpot" + (parsed.names.length === 1 ? "" : "s") + ": " + parsed.names.join(", ") + ".";
+    showError("");
+  } catch (err) {
+    $("run").disabled = true;
+    $("runHint").textContent = "This dump could not be read.";
+    showError(err.message);
+  }
+}
+
+$("dumpFile").addEventListener("change", function () {
+  var file = this.files && this.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function () { setDump(file.name, String(reader.result)); };
+  reader.readAsText(file);
+});
+
+$("ppsFile").addEventListener("change", function () {
+  var file = this.files && this.files[0];
+  if (!file) return;
+  $("ppsName").textContent = file.name;
+  file.arrayBuffer().then(readXlsx).then(function (book) {
+    var options = ppsOptions(book);
+    var box = $("ppsChoices");
+    box.innerHTML = "";
+    if (!options.length) {
+      $("ppsNote").textContent = "Could not find jackpot rows on Progressive Jackpots. Type the settings in.";
+      return;
+    }
+    options.forEach(function (option, index) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = option.label;
+      if (index === 0) button.className = "primary";
+      button.addEventListener("click", function () { applyOption(option); });
+      box.appendChild(button);
+    });
+    applyOption(options[0]);
+    $("ppsNote").textContent = options.length > 1
+      ? "This workbook has more than one jackpot block. The first one is filled in. Switch blocks if this game is the other column."
+      : "Fields filled from the workbook. They follow the sheet order, which needs to match the dump.";
+  }).catch(function (err) {
+    $("ppsNote").textContent = err.message || String(err);
+  });
+});
+
+function applyOption(option) {
+  if (option.mainRtp !== null) $("mainRtp").value = option.mainRtp;
+  if (option.stdDev !== null) $("stdDev").value = option.stdDev;
+  if (option.seedRtp !== null) $("seedRtp").value = option.seedRtp;
+  if (option.contributionRtp !== null) $("contributionRtp").value = option.contributionRtp;
+  if (option.oddsDown !== null) $("oddsDown").value = option.oddsDown;
+  var names = null;
+  if (dumpText) {
+    try { names = SimCheck.parseDump(dumpText).names; } catch (e) { names = null; }
+  }
+  if (!names || names.length !== option.jps.length) names = option.jps.map(function (jp) { return jp.name; });
+  renderJpRows(names);
+  option.jps.forEach(function (jp, i) {
+    var inputs = $("jpRows").querySelectorAll("tr")[i].querySelectorAll("input");
+    inputs[0].value = jp.oddsUp;
+    inputs[1].value = jp.seed;
+    inputs[2].value = jp.target;
+  });
+}
+
+$("run").addEventListener("click", function () {
+  showError("");
+  try {
+    var jps = readJps();
+    var result = SimCheck.run(dumpText, {
+      mainRtp: num($("mainRtp").value),
+      stdDev: num($("stdDev").value),
+      seedRtp: num($("seedRtp").value),
+      contributionRtp: num($("contributionRtp").value),
+      oddsDown: num($("oddsDown").value),
+      oddsUp: jps.map(function (jp) { return num(jp.oddsUp); }),
+      seeds: jps.map(function (jp) { return num(jp.seed); }),
+      targets: jps.map(function (jp) { return num(jp.target); })
+    });
+    paint(result);
+  } catch (err) {
+    showError(err.message);
+  }
+});
+
+function paint(result) {
+  $("empty").classList.add("hidden");
+  $("result").classList.remove("hidden");
+  $("download").disabled = false;
+  lastReport = result.report;
+  var failClass = result.fail ? "bad" : "ok";
+  $("stats").innerHTML = [
+    stat(result.fail ? "FAIL" : "PASS", result.fail ? String(result.fail) : "All pass", failClass),
+    stat("Tests", result.checks + ", " + result.pass + " pass", ""),
+    stat("Stakes", String(result.wagers.length), ""),
+    stat("Seed balance", result.seedField, "")
+  ].join("");
+  var head = "<tr><th>Stake</th><th class=\"num\">Plays</th><th class=\"num\">Base RTP</th><th class=\"num\">JP RTP</th>";
+  result.names.forEach(function (name, i) { head += "<th class=\"num\">JP" + i + " wins</th><th class=\"num\">Avg JP" + i + "</th>"; });
+  head += "</tr>";
+  var body = result.wagers.map(function (row) {
+    var cells = "<td class=\"num\">" + row.wager + "</td><td class=\"num\">" + Math.round(row.plays).toLocaleString("en-US") + "</td>"
+      + "<td class=\"num\">" + pill(row.rtp, row.checks[0].pass) + "</td>"
+      + "<td class=\"num\">" + pill(row.jpRtp, row.checks.filter(function (c) { return c.name === "Total JP RTP"; })[0].pass) + "</td>";
+    row.jpWins.forEach(function (jp, i) {
+      cells += "<td class=\"num\">" + pill(jp.wins, jp.pass) + "</td>";
+      cells += "<td class=\"num\">" + pill(row.perJp[i].avg, row.perJp[i].avgPass) + "</td>";
+    });
+    return "<tr>" + cells + "</tr>";
+  }).join("");
+  $("wagerTable").innerHTML = head + body;
+  var fails = [];
+  result.wagers.forEach(function (row) {
+    row.checks.forEach(function (check) {
+      if (!check.pass) fails.push({ wager: row.wager, check: check });
+    });
+  });
+  if (!fails.length) {
+    $("fails").className = "note";
+    $("fails").textContent = "None.";
+  } else {
+    $("fails").className = "note bad";
+    $("fails").innerHTML = fails.map(function (item) {
+      var c = item.check;
+      var range = c.hi === null || c.hi === undefined ? ("compared with " + fmtNum(c.lo)) : ("bounds " + fmtNum(c.lo) + " to " + fmtNum(c.hi));
+      var actual = c.actual === null || c.actual === undefined ? "" : (" Actual " + fmtNum(c.actual) + ".");
+      return "<div><b>$" + item.wager + "</b> " + escapeHtml(c.name) + "." + actual + " " + range + ".</div>";
+    }).join("");
+  }
+  $("report").textContent = result.report;
+}
+
+function stat(label, value, cls) {
+  return '<div class="stat"><div class="v ' + cls + '">' + escapeHtml(value) + '</div><div class="l">' + escapeHtml(label) + "</div></div>";
+}
+function pill(value, pass) {
+  return '<span class="pill ' + (pass ? "ok" : "bad") + '">' + fmtNum(value) + "</span>";
+}
+function fmtNum(value) {
+  if (typeof value !== "number" || !isFinite(value)) return "";
+  if (Math.abs(value) >= 1000) return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  var text = value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+  return text;
+}
+
+$("download").addEventListener("click", function () {
+  var blob = new Blob([lastReport], { type: "text/plain" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = "simulation check.txt";
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+renderJpRows(["", ""]);
+
+function cellNum(value) {
+  if (typeof value === "number" && isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && isFinite(parseFloat(value))) return parseFloat(value);
+  return null;
+}
+
+function ppsOptions(book) {
+  var summary = sheetByName(book, "Summary") || [];
+  var progressive = sheetByName(book, "Progressive Jackpots") || [];
+  var stdDev = labeled(summary, "Std. Dev.");
+  var main = labeled(summary, "Base RTP setting(JP exclude)");
+  if (main === null) main = labeled(progressive, "Main Game RTP");
+  var blocks = splitBlocks(progressive);
+  return blocks.map(function (block) {
+    var tables = oddsTables(block.rows);
+    var seedTable = null, avgTable = null;
+    tables.forEach(function (table) {
+      if (table.average) avgTable = table;
+      else seedTable = table;
+    });
+    var jps = [];
+    if (seedTable) {
+      seedTable.rows.forEach(function (row) {
+        var avg = avgTable ? findByName(avgTable.rows, row.name) : null;
+        var seed = row.prize;
+        var average = avg ? avg.prize : null;
+        if (seed === null || average === null || row.oddsUp === null) return;
+        jps.push({ name: row.name, oddsUp: snap(row.oddsUp), seed: snap(seed), target: snap(seed + average) });
+      });
+    }
+    return {
+      label: block.name || "Use these settings",
+      mainRtp: main,
+      stdDev: stdDev,
+      seedRtp: firstSeedRtp(block.rows) !== null ? firstSeedRtp(block.rows) : labeled(block.rows, "Seed contribution RTP"),
+      contributionRtp: labeled(block.rows, "Jackpot Contributions (excluding seed)") !== null ? labeled(block.rows, "Jackpot Contributions (excluding seed)") : labeled(block.rows, "JP Contribution RTP"),
+      oddsDown: labeled(block.rows, "Base JP Odds Down"),
+      jps: jps
+    };
+  }).filter(function (option) { return option.jps.length; });
+}
+
+function sheetByName(book, name) {
+  var keys = Object.keys(book);
+  for (var i = 0; i < keys.length; i++) if (keys[i] === name) return book[keys[i]];
+  return null;
+}
+
+function labeled(rows, label) {
+  for (var r = 0; r < rows.length; r++) {
+    var row = rows[r];
+    for (var c = 0; c < row.length; c++) {
+      if (row[c] === label) {
+        for (var k = c + 1; k < row.length; k++) {
+          var value = cellNum(row[k]);
+          if (value !== null) return value;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function firstText(row) {
+  for (var i = 0; i < row.length; i++) {
+    if (row[i] !== null && row[i] !== undefined && row[i] !== "") return row[i];
+  }
+  return null;
+}
+
+function snap(value) {
+  var nearest = Math.round(value);
+  if (Math.abs(value - nearest) < 1e-6) return nearest;
+  return value;
+}
+
+function firstSeedRtp(rows) {
+  for (var r = 0; r < rows.length; r++) {
+    if (firstText(rows[r]) === "Seed") {
+      for (var c = 0; c < rows[r].length; c++) {
+        var value = cellNum(rows[r][c]);
+        if (value !== null && value < 1) return value;
+      }
+    }
+  }
+  return null;
+}
+
+function splitBlocks(rows) {
+  var blocks = [];
+  var current = { name: "Use these settings", rows: [] };
+  var oddsDown = null;
+  rows.forEach(function (row) {
+    if (firstText(row) === "Base JP Odds Down") {
+      var value = labeled([row], "Base JP Odds Down");
+      if (value !== null) oddsDown = value;
+    }
+    var title = firstText(row);
+    if (title === "Before Multiplier" || title === "After Multiplier") {
+      if (current.rows.length && oddsTables(current.rows).length) blocks.push(current);
+      current = { name: title === "Before Multiplier" ? "Before multiplier" : "After multiplier", rows: oddsDown === null ? [] : [["Base JP Odds Down", oddsDown]] };
+      return;
+    }
+    current.rows.push(row);
+  });
+  if (oddsTables(current.rows).length) blocks.push(current);
+  if (!blocks.length && rows.length) blocks.push({ name: "Use these settings", rows: rows });
+  return blocks;
+}
+
+function oddsTables(rows) {
+  var tables = [];
+  for (var r = 0; r < rows.length; r++) {
+    var header = rows[r].map(function (cell) { return cell === null || cell === undefined ? "" : String(cell); });
+    var up = header.indexOf("Base Odds Up");
+    if (up < 0) continue;
+    var prize = header.indexOf("Average Prize");
+    var average = prize >= 0;
+    if (!average) prize = header.indexOf("Prize");
+    var nameCol = header.indexOf("Name");
+    if (prize < 0 || nameCol < 0) continue;
+    var body = [];
+    for (var i = r + 1; i < rows.length; i++) {
+      var name = rows[i][nameCol];
+      if (typeof name !== "string" || !name) break;
+      body.push({ name: name, prize: cellNum(rows[i][prize]), oddsUp: cellNum(rows[i][up]) });
+    }
+    if (body.length) tables.push({ average: average, rows: body });
+  }
+  return tables;
+}
+
+function findByName(rows, name) {
+  for (var i = 0; i < rows.length; i++) if (rows[i].name === name) return rows[i];
+  return null;
+}
+
+async function readXlsx(buffer) {
+  var files = await unzip(buffer);
+  var shared = [];
+  if (files["xl/sharedStrings.xml"]) shared = sharedStrings(files["xl/sharedStrings.xml"]);
+  var workbook = files["xl/workbook.xml"];
+  var rels = files["xl/_rels/workbook.xml.rels"];
+  if (!workbook || !rels) throw new Error("This xlsx has no workbook");
+  var names = [];
+  workbook.replace(/<sheet\b[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"/g, function (_, name, id) {
+    names.push({ name: decodeXml(name), id: id });
+    return _;
+  });
+  var targets = {};
+  rels.replace(/<Relationship\b[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g, function (_, id, target) {
+    targets[id] = target.replace(/^\//, "").replace(/^xl\//, "");
+    return _;
+  });
+  var book = {};
+  names.forEach(function (sheet) {
+    var target = "xl/" + targets[sheet.id];
+    if (!files[target]) return;
+    book[sheet.name] = sheetRows(files[target], shared);
+  });
+  return book;
+}
+
+function sharedStrings(xml) {
+  var out = [];
+  var re = /<si\b[^>]*>([\s\S]*?)<\/si>/g;
+  var match;
+  while ((match = re.exec(xml))) {
+    var text = "";
+    var parts = match[1].match(/<t\b[^>]*>([\s\S]*?)<\/t>/g) || [];
+    parts.forEach(function (part) {
+      var inner = /<t\b[^>]*>([\s\S]*?)<\/t>/.exec(part);
+      text += decodeXml(inner[1]);
+    });
+    out.push(text);
+  }
+  return out;
+}
+
+function sheetRows(xml, shared) {
+  var rows = [];
+  var re = /<row\b[^>]*>([\s\S]*?)<\/row>/g;
+  var match;
+  while ((match = re.exec(xml))) {
+    var row = [];
+    var cells = match[1].match(/<c\b[^>]*\/>|<c\b[^>]*>[\s\S]*?<\/c>/g) || [];
+    cells.forEach(function (cell) {
+      var ref = /r="([A-Z]+)\d+"/.exec(cell);
+      var col = ref ? colIndex(ref[1]) : row.length;
+      var type = /t="([^"]+)"/.exec(cell);
+      var kind = type ? type[1] : "";
+      var raw = /<v>([\s\S]*?)<\/v>/.exec(cell);
+      var inline = /<is>[\s\S]*?<t\b[^>]*>([\s\S]*?)<\/t>/.exec(cell);
+      var value = null;
+      if (kind === "s" && raw) value = shared[parseInt(raw[1], 10)] || "";
+      else if (kind === "inlineStr" && inline) value = decodeXml(inline[1]);
+      else if (raw) {
+        var parsed = parseFloat(raw[1]);
+        value = isFinite(parsed) && String(parsed) !== "" ? parsed : decodeXml(raw[1]);
+      }
+      row[col] = value;
+    });
+    rows.push(row);
+  }
+  return rows;
+}
+
+function colIndex(letters) {
+  var n = 0;
+  for (var i = 0; i < letters.length; i++) n = n * 26 + (letters.charCodeAt(i) - 64);
+  return n - 1;
+}
+
+function decodeXml(text) {
+  return text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+}
+
+async function unzip(buffer) {
+  var bytes = new Uint8Array(buffer);
+  var view = new DataView(buffer);
+  var files = {};
+  var offset = 0;
+  while (offset + 30 < bytes.length && view.getUint32(offset, true) === 0x04034b50) {
+    var method = view.getUint16(offset + 8, true);
+    var compSize = view.getUint32(offset + 18, true);
+    var nameLen = view.getUint16(offset + 26, true);
+    var extraLen = view.getUint16(offset + 28, true);
+    var name = new TextDecoder().decode(bytes.subarray(offset + 30, offset + 30 + nameLen));
+    var start = offset + 30 + nameLen + extraLen;
+    var slice = bytes.subarray(start, start + compSize);
+    if (method === 0) files[name] = new TextDecoder().decode(slice);
+    else if (method === 8) files[name] = new TextDecoder().decode(await inflate(slice));
+    offset = start + compSize;
+  }
+  return files;
+}
+
+async function inflate(bytes) {
+  if (typeof DecompressionStream !== "function") throw new Error("This browser cannot read xlsx");
+  var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+</script>
+</body>
+</html>

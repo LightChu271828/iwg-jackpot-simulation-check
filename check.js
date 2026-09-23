@@ -1,0 +1,389 @@
+/* Same checks as SimulationCheck (Main.java + JackpotConfig.java).
+   Labels, rounding and the strict interval tests are kept as they are. */
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.SimCheck = factory();
+})(typeof self !== "undefined" ? self : this, function () {
+  var KNOWN = {
+    "Number of plays": 1, "Wager amount": 1, "Total wager": 1, "Base game prize total": 1,
+    "Total JP contributions awarded": 1, "Total Seeds awarded": 1, "Total JP awarded": 1,
+    "Total JP contributions available": 1, "Initial amount": 1, "Seed": 1, "Reserve Seed": 1,
+    "Deficit": 1, "Overflow": 1, "Total JP available": 1, "Total contribution awarded + available": 1,
+    "Total JP awarded + available": 1, "Increment value": 1, "Seed increment value": 1,
+    "Reserve seed increment value": 1, "Num wins": 1, "Largest Single Jackpot": 1,
+    "Smallest Single Jackpot": 1, "Wins": 1, "Multipliers": 1
+  };
+  var NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/;
+
+  function round(value, decimalPlaces) {
+    var scaleFactor = Math.pow(10, decimalPlaces);
+    return Math.round(value * scaleFactor) / scaleFactor;
+  }
+
+  function fmt(n) {
+    if (!isFinite(n)) return String(n);
+    var text = String(round(n, 10));
+    return text === "-0" ? "0" : text;
+  }
+
+  function tryParseNumber(token) {
+    var text = String(token).trim();
+    var match = NUMBER.exec(text);
+    if (!match || match.index !== 0) return null;
+    var rest = text.slice(match[0].length).trim();
+    if (rest && !(rest.charAt(0) === "(" && rest.charAt(rest.length - 1) === ")")) return null;
+    return parseFloat(match[0]);
+  }
+
+  function splitValues(rest) {
+    var values = [];
+    if (!rest || !String(rest).trim()) return values;
+    String(rest).split(",").forEach(function (part) {
+      var token = part.trim();
+      if (token) values.push(token);
+    });
+    return values;
+  }
+
+  function oneNumber(rest, key, where) {
+    var values = splitValues(rest);
+    if (values.length !== 1) throw new Error(where + ": " + key + " should be one number");
+    var number = tryParseNumber(values[0]);
+    if (number === null) throw new Error(where + ": could not read " + key + " from " + values[0]);
+    return number;
+  }
+
+  function parseDump(text) {
+    var lines = String(text).replace(/^\uFEFF/, "").split(/\r?\n/);
+    var sections = [];
+    var current = null;
+    for (var lineNo = 0; lineNo < lines.length; lineNo++) {
+      var line = lines[lineNo].trim();
+      if (!line) continue;
+      var comma = line.indexOf(",");
+      var key = comma < 0 ? line : line.slice(0, comma).trim();
+      var rest = comma < 0 ? "" : line.slice(comma + 1);
+      if (key.indexOf("Tier") === 0 || key === "Multipliers") continue;
+      var where = "line " + (lineNo + 1);
+      if (key === "Number of plays") {
+        current = { name: null, fields: {}, wins: null };
+        sections.push(current);
+        current.fields[key] = oneNumber(rest, key, where);
+        continue;
+      }
+      var values = splitValues(rest);
+      if (!KNOWN[key] && values.length === 0) {
+        current = { name: key, fields: {}, wins: null };
+        sections.push(current);
+        continue;
+      }
+      if (!current) throw new Error(where + ": data starts before Number of plays");
+      if (key === "Wins") {
+        current.wins = values.map(function (token) {
+          var win = tryParseNumber(token);
+          if (win === null) throw new Error(where + ": could not read a win from " + token);
+          return win;
+        });
+        continue;
+      }
+      if (values.length === 1) {
+        var number = tryParseNumber(values[0]);
+        if (number === null) continue;
+        if (Object.prototype.hasOwnProperty.call(current.fields, key)) throw new Error(where + ": duplicate " + key);
+        current.fields[key] = number;
+      }
+    }
+
+    var wagers = [];
+    var wager = null;
+    sections.forEach(function (section) {
+      if (section.name === null) {
+        wager = { header: section, jps: [] };
+        wagers.push(wager);
+      } else {
+        if (!wager) throw new Error("Jackpot " + section.name + " appears before Number of plays");
+        wager.jps.push(section);
+      }
+    });
+    if (!wagers.length) throw new Error("no wager blocks");
+    var names = wagers[0].jps.map(function (jp) { return jp.name; });
+    if (!names.length) throw new Error("first wager has no jackpot");
+    wagers.forEach(function (block) {
+      var got = block.jps.map(function (jp) { return jp.name; }).join("\0");
+      if (got !== names.join("\0")) {
+        throw new Error("Jackpot list changed at wager " + requireField(block.header, "Wager amount"));
+      }
+    });
+    return { names: names, wagers: wagers };
+  }
+
+  function requireField(section, key) {
+    if (!Object.prototype.hasOwnProperty.call(section.fields, key)) {
+      throw new Error((section.name === null ? "wager header" : section.name) + ": missing " + key);
+    }
+    return section.fields[key];
+  }
+
+  function seedBalance(section, state) {
+    var hasSeed = Object.prototype.hasOwnProperty.call(section.fields, "Seed");
+    var hasInitial = Object.prototype.hasOwnProperty.call(section.fields, "Initial amount");
+    var seed = hasSeed ? section.fields.Seed : 0;
+    var field, value;
+    if (hasSeed && !(seed === 0 && hasInitial)) {
+      field = "Seed";
+      value = seed;
+    } else if (hasInitial) {
+      field = "Initial amount";
+      value = section.fields["Initial amount"];
+    } else {
+      throw new Error((section.name === null ? "wager header" : section.name) + ": missing Seed / Initial amount");
+    }
+    if (!state.seedField) state.seedField = field;
+    else if (state.seedField !== field) throw new Error("Mixed seed fields in one file: " + state.seedField + " and " + field);
+    return value;
+  }
+
+  function buildConfig(input) {
+    var oddsUp = input.oddsUp, seeds = input.seeds, targets = input.targets;
+    if (!oddsUp.length || oddsUp.length !== seeds.length || oddsUp.length !== targets.length) {
+      throw new Error("Odds Up, Seed Value and Triggered Target must list the same number of jackpots");
+    }
+    if (!(input.oddsDown > 0)) throw new Error("Odds Down must be positive");
+    var oddsUpSum = oddsUp.reduce(function (a, b) { return a + b; }, 0);
+    if (!(oddsUpSum > 0)) throw new Error("Odds Up must sum to a positive number");
+    var totalCost = 0;
+    var costs = oddsUp.map(function (up, i) {
+      var cost = (targets[i] - seeds[i]) * up;
+      totalCost += cost;
+      return cost;
+    });
+    if (totalCost === 0) throw new Error("Triggered Target and Seed leave no contribution to split");
+    var avg = 0;
+    var contriSplit = costs.map(function (cost, i) {
+      avg += targets[i] * oddsUp[i] / oddsUpSum;
+      return round(input.contributionRtp * cost / totalCost, 6);
+    });
+    return {
+      defaultRTP: input.mainRtp,
+      defaultStdDev: input.stdDev,
+      seedRTP: input.seedRtp,
+      contributionRtp: input.contributionRtp,
+      oddsDown: input.oddsDown,
+      oddsUp: oddsUp,
+      seeds: seeds,
+      targets: targets,
+      numOfJPs: oddsUp.length,
+      oddsUpSum: oddsUpSum,
+      avgJPSize: avg,
+      contriSplit: contriSplit
+    };
+  }
+
+  function Tally() {
+    this.checks = 0;
+    this.pass = 0;
+    this.fail = 0;
+  }
+  Tally.prototype.mark = function (pass) {
+    this.checks++;
+    if (pass) this.pass++;
+    else this.fail++;
+    return pass ? "---PASS---" : "***FAIL***";
+  };
+
+  function emit(lines, tally, pass, text, a, b) {
+    lines.push(text + tally.mark(pass));
+    if (!pass && arguments.length > 4) {
+      lines.push(String(a));
+      lines.push(String(b));
+    }
+  }
+
+  function run(text, input) {
+    var parsed = parseDump(text);
+    var config = buildConfig(input);
+    if (parsed.names.length !== config.numOfJPs) {
+      throw new Error("File has " + parsed.names.length + " jackpot(s) (" + parsed.names.join(", ") + ") but " + config.numOfJPs + " parameter value(s) were entered");
+    }
+    var state = { seedField: "" };
+    parsed.wagers.forEach(function (block) {
+      seedBalance(block.header, state);
+      block.jps.forEach(function (jp) { seedBalance(jp, state); });
+    });
+    var lines = [];
+    var tally = new Tally();
+    var wagerResults = [];
+    lines.push("Seed balance field:\t" + state.seedField);
+    lines.push("Jackpots:\t" + parsed.names.map(function (name, i) { return "JP" + i + " " + name; }).join(", "));
+    lines.push("");
+
+    parsed.wagers.forEach(function (block) {
+      var plays = requireField(block.header, "Number of plays");
+      var wager = requireField(block.header, "Wager amount");
+      var basePrize = requireField(block.header, "Base game prize total");
+      var shared = [pack(block.header, seedBalance(block.header, state))];
+      var jps = block.jps.map(function (jp) {
+        var packed = pack(jp, seedBalance(jp, state));
+        shared.push(packed);
+        if (!jp.wins) throw new Error(jp.name + ": missing Wins");
+        var sum = jp.wins.reduce(function (a, b) { return a + b; }, 0);
+        return {
+          name: jp.name,
+          numWins: requireField(jp, "Num wins"),
+          largest: requireField(jp, "Largest Single Jackpot"),
+          wins: jp.wins,
+          sum: sum,
+          pack: packed
+        };
+      });
+      wagerResults.push(checkWager(config, plays, wager, basePrize, shared, jps, lines, tally));
+      lines.push(" ");
+    });
+
+    lines.push("Summary");
+    lines.push("Total tests:\t" + tally.checks);
+    lines.push("Number of pass:\t" + tally.pass);
+    lines.push("Number of fail:\t" + tally.fail);
+    return {
+      seedField: state.seedField,
+      names: parsed.names,
+      contriSplit: config.contriSplit,
+      wagers: wagerResults,
+      checks: tally.checks,
+      pass: tally.pass,
+      fail: tally.fail,
+      report: lines.join("\n") + "\n"
+    };
+  }
+
+  function pack(section, seedBalanceValue) {
+    return {
+      contriAward: requireField(section, "Total JP contributions awarded"),
+      seedAward: requireField(section, "Total Seeds awarded"),
+      jpAward: requireField(section, "Total JP awarded"),
+      contriAvlb: requireField(section, "Total JP contributions available"),
+      seedAvlb: seedBalanceValue,
+      jpAvlb: requireField(section, "Total JP available"),
+      contriBoth: requireField(section, "Total contribution awarded + available"),
+      jpBoth: requireField(section, "Total JP awarded + available")
+    };
+  }
+
+  function record(row, name, actual, lo, hi, pass) {
+    row.checks.push({ name: name, actual: actual, lo: lo, hi: hi, pass: pass });
+  }
+
+  function checkWager(config, plays, wager, basePrize, shared, jps, lines, tally) {
+    var row = { wager: wager, plays: plays, checks: [] };
+    lines.push("Wager amount check:\t" + wager);
+    lines.push("Number of plays:\t" + fmt(plays));
+
+    var rtp = basePrize / (plays * wager);
+    var rtpLo = round(config.defaultRTP - 3 * config.defaultStdDev / Math.pow(plays, 0.5), 5);
+    var rtpHi = round(config.defaultRTP + 3 * config.defaultStdDev / Math.pow(plays, 0.5), 5);
+    var rtpPass = rtp > rtpLo && rtp < rtpHi;
+    lines.push("Expected RTP:\t" + config.defaultRTP + "\t");
+    lines.push("Actual RTP:\t" + fmt(rtp) + "\t" + tally.mark(rtpPass));
+    lines.push("99.5% Confidence Interval of RTP:");
+    lines.push("RTP LowerBond:\t" + rtpLo);
+    lines.push("RTP UpperBond:\t" + rtpHi);
+    row.rtp = rtp; row.rtpLo = rtpLo; row.rtpHi = rtpHi;
+    record(row, "Base game RTP", rtp, rtpLo, rtpHi, rtpPass);
+
+    row.jpWins = jps.map(function (jp, j) {
+      var prob = wager * config.oddsUp[j] / config.oddsDown;
+      var margin = plays * 3 * Math.pow(prob * (1 - prob) / plays, 0.5);
+      var hi = round(prob * plays + margin, 2);
+      var lo = round(prob * plays - margin, 2);
+      var pass = jp.numWins > lo && jp.numWins < hi;
+      lines.push("Number of wins JP" + j + ":\t" + jp.numWins + "\t" + tally.mark(pass));
+      lines.push("99.5% Confidence Interval of number of JP" + j + " wins:");
+      lines.push("JP" + j + " wins LowerBond:\t" + lo);
+      lines.push("JP" + j + " wins upperBond:\t" + hi);
+      if (Math.abs(jp.wins.length - jp.numWins) > 1e-6) {
+        lines.push("Warning:\tJP" + j + " listed " + jp.wins.length + " wins, Num wins is " + jp.numWins);
+      }
+      record(row, "JP" + j + " " + jp.name + " win count", jp.numWins, lo, hi, pass);
+      return { name: jp.name, wins: jp.numWins, lo: lo, hi: hi, pass: pass, listed: jp.wins.length };
+    });
+
+    var header = shared[0];
+    var awardedSum = 0, availableSum = 0;
+    for (var i = 1; i < shared.length; i++) {
+      awardedSum += shared[i].jpAward;
+      availableSum += shared[i].jpAvlb;
+    }
+    awardedSum = round(awardedSum, 5);
+    availableSum = round(availableSum, 5);
+    var awardPass = Math.abs(round(header.jpAward, 5) - awardedSum) < 1e-9;
+    emit(lines, tally, awardPass, "Total JP awarded:\t" + fmt(header.jpAward) + "\t", round(header.jpAward, 5), awardedSum);
+    var avlbPass = Math.abs(round(header.jpAvlb, 5) - availableSum) < 1e-9;
+    emit(lines, tally, avlbPass, "Total JP available:\t" + header.jpAvlb + "\t", round(header.jpAvlb, 5), availableSum);
+    lines.push("Total JP awarded + available:\t" + fmt(header.jpBoth));
+    var sumPass = round(header.jpBoth, 4) === round(header.jpAward + header.jpAvlb, 4);
+    lines.push("Does the sum up match the Total JP awarded + available?\t\t" + tally.mark(sumPass));
+    record(row, "Total JP awarded", header.jpAward, awardedSum, null, awardPass);
+    record(row, "Total JP available", header.jpAvlb, availableSum, null, avlbPass);
+    record(row, "Awarded + available", header.jpBoth, round(header.jpAward + header.jpAvlb, 4), null, sumPass);
+
+    var expectedJp = round(config.seedRTP + config.contributionRtp, 6);
+    var actualJp = round(header.jpBoth / (wager * plays), 6);
+    var probAll = config.oddsUpSum * wager / config.oddsDown;
+    var expectedWins = plays * probAll;
+    var marginError = 3 * Math.pow(plays * probAll * (1 - probAll), 0.5);
+    var jpLo = round((expectedWins - marginError) * config.avgJPSize / (plays * wager), 6);
+    var jpHi = round((expectedWins + marginError) * config.avgJPSize / (plays * wager), 6);
+    var jpPass = actualJp > jpLo && actualJp < jpHi;
+    lines.push("Expected Total JP RTP:\t" + expectedJp);
+    lines.push("Actual Total JP RTP:\t" + actualJp + "\t" + tally.mark(jpPass));
+    lines.push("99.5% Confidence Interval of Total JP:");
+    lines.push("Total JP LowerBond:\t" + jpLo);
+    lines.push("Total JP UpperBond:\t" + jpHi);
+    row.jpRtp = actualJp; row.jpLo = jpLo; row.jpHi = jpHi;
+    record(row, "Total JP RTP", actualJp, jpLo, jpHi, jpPass);
+
+    var contriExpected = round(config.contributionRtp * plays * wager, 5);
+    var contriPass = Math.abs(round(header.contriBoth, 5) - contriExpected) < 1e-9;
+    emit(lines, tally, contriPass, "Total contribution awarded + available:\t" + fmt(header.contriBoth) + "\t", round(header.contriBoth, 5), contriExpected);
+    record(row, "Contribution awarded + available", header.contriBoth, contriExpected, null, contriPass);
+
+    row.perJp = jps.map(function (jp, j) {
+      var avg = round(jp.sum / jp.wins.length, 5);
+      var oddsUp = config.oddsUp[j] * wager / config.oddsDown;
+      var sd = Math.pow(oddsUp * (1 - oddsUp) / plays, 0.5);
+      var prizeHi = config.seeds[j] + (config.contriSplit[j] * wager / (oddsUp - 3 * sd));
+      var prizeLo = config.seeds[j] + (config.contriSplit[j] * wager / (oddsUp + 3 * sd));
+      return { name: jp.name, avg: avg, lo: prizeLo, hi: prizeHi, largest: jp.largest, pack: jp.pack, wins: jp.wins };
+    });
+    row.perJp.forEach(function (jp, j) {
+      var p = jp.pack;
+      var seedBoth = p.seedAvlb + p.seedAward;
+      var seedExpected = round(config.seeds[j] + p.seedAward, 5);
+      var seedPass = Math.abs(round(seedBoth, 5) - seedExpected) < 1e-9;
+      emit(lines, tally, seedPass, "JP" + j + " seed awarded + available:\t" + fmt(seedBoth) + "\t", round(seedBoth, 5), seedExpected);
+      var contriJpExpected = round(p.contriAvlb + p.contriAward, 5);
+      var contriJpPass = Math.abs(round(p.contriBoth, 5) - contriJpExpected) < 1e-9;
+      emit(lines, tally, contriJpPass, "JP" + j + " contribution awarded + available:\t" + fmt(p.contriBoth) + "\t", round(p.contriBoth, 5), contriJpExpected);
+      record(row, "JP" + j + " seed awarded + available", seedBoth, seedExpected, null, seedPass);
+      record(row, "JP" + j + " contribution awarded + available", p.contriBoth, contriJpExpected, null, contriJpPass);
+    });
+    row.perJp.forEach(function (jp, j) {
+      var avgPass = jp.avg > jp.lo && jp.avg < jp.hi;
+      lines.push("Avg. Prize of JP" + j + " Wins:\t" + jp.avg + "\t" + tally.mark(avgPass));
+      lines.push("99.5% Confidence Interval of Prize of JP" + j + ":");
+      lines.push("Prize of JP" + j + " LowerBond:\t" + round(jp.lo, 5));
+      lines.push("Prize of JP" + j + " UpperBond:\t" + round(jp.hi, 5));
+      lines.push("Expected JP" + j + " Wins:\t" + config.targets[j]);
+      lines.push("Largest JP" + j + ":\t" + fmt(jp.largest));
+      var above = jp.wins.every(function (win) { return win >= config.seeds[j]; });
+      lines.push("Is every JP" + j + " wins above seed? \t\t" + tally.mark(above));
+      jp.avgPass = avgPass;
+      jp.above = above;
+      record(row, "Avg. prize of JP" + j + " " + jp.name, jp.avg, jp.lo, jp.hi, avgPass);
+      record(row, "Every JP" + j + " win above seed " + config.seeds[j], null, config.seeds[j], null, above);
+    });
+    return row;
+  }
+
+  return { run: run, parseDump: parseDump, round: round };
+});
