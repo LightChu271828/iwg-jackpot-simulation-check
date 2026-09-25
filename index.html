@@ -246,8 +246,12 @@ function formatSetting(value) {
 
 function reportName(fileName) {
   var base = String(fileName || "").replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "");
-  base = base.replace(/_PPS(?:_.*)?$/i, "").replace(/\([^)]*\)/g, "").replace(/_+$/g, "").trim();
-  return (base || "simulation") + "_SimCheck.txt";
+  base = base.replace(/_PPS(?:_.*)?$/i, "").replace(/\([^)]*\)/g, "").replace(/^\d{6}_/, "").replace(/_+$/g, "").trim();
+  var now = new Date();
+  var month = now.getMonth() + 1;
+  var day = now.getDate();
+  var stamp = String(now.getFullYear()).slice(2) + (month < 10 ? "0" : "") + month + (day < 10 ? "0" : "") + day;
+  return stamp + "_" + (base || "simulation") + "_SimCheck.txt";
 }
 
 function numCell(kind, value) {
