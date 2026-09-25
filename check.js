@@ -143,6 +143,24 @@
     return value;
   }
 
+  function isMmj3Pair(names) {
+    if (!names || names.length !== 2) return false;
+    var a = names[0], b = names[1];
+    return (a === "rocketjp_boost" && b === "rocketjp_power") || (a === "rocketjp_power" && b === "rocketjp_boost");
+  }
+
+  function expandPowerHour(names, input) {
+    if (!isMmj3Pair(names) || !input.oddsUp || input.oddsUp.length !== 1) {
+      return { input: input, expanded: false };
+    }
+    var copy = {};
+    Object.keys(input).forEach(function (key) { copy[key] = input[key]; });
+    copy.oddsUp = [input.oddsUp[0], input.oddsUp[0]];
+    copy.seeds = [input.seeds[0] / 2, input.seeds[0] / 2];
+    copy.targets = [input.targets[0] / 2, input.targets[0] / 2];
+    return { input: copy, expanded: true };
+  }
+
   function buildConfig(input) {
     var oddsUp = input.oddsUp, seeds = input.seeds, targets = input.targets;
     if (!oddsUp.length || oddsUp.length !== seeds.length || oddsUp.length !== targets.length) {
@@ -201,6 +219,8 @@
 
   function run(text, input) {
     var parsed = parseDump(text);
+    var prepared = expandPowerHour(parsed.names, input);
+    input = prepared.input;
     var config = buildConfig(input);
     if (parsed.names.length !== config.numOfJPs) {
       throw new Error("File has " + parsed.names.length + " jackpot(s) (" + parsed.names.join(", ") + ") but " + config.numOfJPs + " parameter value(s) were entered");
@@ -215,6 +235,9 @@
     var wagerResults = [];
     lines.push("Seed balance field:\t" + state.seedField);
     lines.push("Jackpots:\t" + parsed.names.map(function (name, i) { return "JP" + i + " " + name; }).join(", "));
+    if (prepared.expanded) {
+      lines.push("Power Hour: rocketjp_boost and rocketjp_power are one PPS jackpot, checked as two equal halves (seed " + input.seeds[0] + ", trigger " + input.targets[0] + " each).");
+    }
     lines.push("");
 
     parsed.wagers.forEach(function (block) {
@@ -519,6 +542,8 @@
   }
 
   function runSample(sample, input) {
+    var prepared = expandPowerHour(sample.pools.map(function (pool) { return pool.id; }), input);
+    input = prepared.input;
     var config = buildConfig(input);
     if (sample.pools.length !== config.numOfJPs) {
       throw new Error("The rtp-test file has " + sample.pools.length + " jackpot(s) (" + sample.pools.map(function (pool) { return pool.id; }).join(", ") + ") and the PPS has " + config.numOfJPs + ".");
@@ -603,7 +628,7 @@
       rows: rows,
       pools: pools,
       summary: summary,
-      report: sampleReport(summary, pools, rows, config)
+      report: sampleReport(summary, pools, rows, config, prepared.expanded)
     };
   }
 
@@ -616,9 +641,12 @@
     return value.toFixed(1);
   }
 
-  function sampleReport(summary, pools, rows, config) {
+  function sampleReport(summary, pools, rows, config, powerHour) {
     var lines = [];
     lines.push("Small-sample rtp test");
+    if (powerHour) {
+      lines.push("Power Hour: rocketjp_boost and rocketjp_power are one PPS jackpot, checked as two equal halves (seed " + config.seeds[0] + ", trigger " + config.targets[0] + " each).");
+    }
     lines.push("Stakes: " + rows.length + ", " + rows.map(function (row) { return "$" + row.wager; }).join(", "));
     lines.push("Tickets per stake: " + rows[0].tickets);
     lines.push("Total stake: " + summary.bet);
@@ -648,5 +676,5 @@
     return lines.join("\n") + "\n";
   }
 
-  return { run: run, parseDump: parseDump, parseRtpBook: parseRtpBook, runSample: runSample, round: round };
+  return { run: run, parseDump: parseDump, parseRtpBook: parseRtpBook, runSample: runSample, round: round, isMmj3Pair: isMmj3Pair, expandPowerHour: expandPowerHour };
 });

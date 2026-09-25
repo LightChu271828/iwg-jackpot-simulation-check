@@ -205,7 +205,7 @@
     <button id="download" type="button" disabled>Download report</button>
   </div>
 </div>
-<script src="check.js"></script>
+<script src="check.js?v=20260925"></script>
 <script>
 var dumpText = "";
 var sample = null;
@@ -350,13 +350,24 @@ $("ppsFile").addEventListener("change", function () {
       box.appendChild(button);
     });
     applyOption(options[0]);
-    $("ppsNote").textContent = options.length > 1
-      ? "This workbook has more than one jackpot block. Settings are the first block. Switch if this game is the other column."
-      : "Settings are this workbook, in sheet order. That order needs to match the simulation result.";
   }).catch(function (err) {
     $("ppsNote").textContent = err.message || String(err);
   });
 });
+
+function currentNames() {
+  if (dumpText) {
+    try { return SimCheck.parseDump(dumpText).names; } catch (e) { return null; }
+  }
+  if (sample) return sample.pools.map(function (pool) { return pool.id; });
+  return null;
+}
+
+function basePpsNote() {
+  var count = $("ppsChoices").querySelectorAll("button").length;
+  if (count > 1) return "This workbook has more than one jackpot block. Settings are the first block. Switch if this game is the other column.";
+  return "Settings are this workbook, in sheet order. That order needs to match the simulation result.";
+}
 
 function applyOption(option) {
   appliedOption = option;
@@ -367,19 +378,35 @@ function applyOption(option) {
   $("seedRtp").value = formatSetting(option.seedRtp);
   $("contributionRtp").value = formatSetting(option.contributionRtp);
   $("oddsDown").value = formatSetting(option.oddsDown);
-  var names = null;
-  if (sample && sample.pools.length === option.jps.length) names = sample.pools.map(function (pool) { return pool.id; });
-  else if (dumpText) {
-    try { names = SimCheck.parseDump(dumpText).names; } catch (e) { names = null; }
+  var names = currentNames();
+  var rows = option.jps;
+  var rowNames = option.jps.map(function (jp) { return jp.name; });
+  var powerHour = "";
+  if (names && option.jps.length === 1) {
+    var expanded = SimCheck.expandPowerHour(names, {
+      oddsUp: [option.jps[0].oddsUp],
+      seeds: [option.jps[0].seed],
+      targets: [option.jps[0].target]
+    });
+    if (expanded.expanded) {
+      rows = expanded.input.seeds.map(function (seed, i) {
+        return { oddsUp: expanded.input.oddsUp[i], seed: seed, target: expanded.input.targets[i] };
+      });
+      rowNames = names;
+      var sheet = option.jps[0];
+      powerHour = "Power Hour merges rocketjp_boost and rocketjp_power into one PPS jackpot (seed " + formatSetting(sheet.seed) + ", trigger " + formatSetting(sheet.target) + "). The simulation writes two equal halves, checked at seed " + formatSetting(rows[0].seed) + " and trigger " + formatSetting(rows[0].target) + " each. ";
+    }
+  } else if (names && names.length === option.jps.length) {
+    rowNames = names;
   }
-  if (!names || names.length !== option.jps.length) names = option.jps.map(function (jp) { return jp.name; });
-  renderJpRows(names);
-  option.jps.forEach(function (jp, i) {
+  renderJpRows(rowNames);
+  rows.forEach(function (jp, i) {
     var inputs = $("jpRows").querySelectorAll("tr")[i].querySelectorAll("input");
-    inputs[0].value = jp.oddsUp;
-    inputs[1].value = jp.seed;
-    inputs[2].value = jp.target;
+    inputs[0].value = formatSetting(jp.oddsUp);
+    inputs[1].value = formatSetting(jp.seed);
+    inputs[2].value = formatSetting(jp.target);
   });
+  $("ppsNote").textContent = powerHour + basePpsNote();
   refreshRun();
 }
 

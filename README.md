@@ -18,3 +18,5 @@ The settings fields are filled from the workbook and are not edited on the page.
 Pass or fail, the test count, each stake, and the failing rows with the value and the bounds. The full checker text can be downloaded.
 
 An rtp-test workbook is read as a small sample. The page pools every stake and compares base RTP, jackpot RTP and hit counts with the PPS. Expected hits are tickets times stake times odds up, divided by odds down. One stake can sit far from the jackpot target when those expected hits are under 1. The pooled line is the comparison.
+
+Power Hour for MMJ3 is the pair `rocketjp_boost` and `rocketjp_power` written as one jackpot on the PPS. The simulation still writes two equal halves. The page checks those halves: each seed and each trigger target is half of the PPS jackpot.
