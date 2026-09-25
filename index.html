@@ -137,9 +137,9 @@
       <div class="files">
         <div class="drop" id="dumpDrop">
           <strong>Simulation result</strong>
-          <span class="hint">The egames .txt report, one block per stake.</span>
+          <span class="hint">An egames .txt report, or an rtp-test workbook with one sheet per stake.</span>
           <div class="name" id="dumpName">No file yet</div>
-          <label class="filebtn" style="display:inline-block;margin-top:8px">Choose file<input id="dumpFile" type="file" accept=".txt,text/plain" /></label>
+          <label class="filebtn" style="display:inline-block;margin-top:8px">Choose file<input id="dumpFile" type="file" accept=".txt,.xlsx,text/plain" /></label>
         </div>
         <div class="drop" id="ppsDrop">
           <strong>PPS workbook</strong>
@@ -194,11 +194,11 @@
   <div id="empty" class="note">No check yet.</div>
   <div id="result" class="hidden">
     <div class="stats" id="stats"></div>
-    <h2>By stake</h2>
+    <h2 id="stakeHeading">By stake</h2>
     <div class="scroll"><table id="wagerTable"></table></div>
-    <h2>Fails</h2>
+    <h2 id="detailHeading">Fails</h2>
     <div id="fails" class="note">None.</div>
-    <h2>Checker report</h2>
+    <h2 id="reportHeading">Checker report</h2>
     <div class="report" id="report"></div>
   </div>
   <div class="btnrow" style="margin-top:16px">
@@ -208,6 +208,7 @@
 <script src="check.js"></script>
 <script>
 var dumpText = "";
+var sample = null;
 var lastReport = "";
 var appliedOption = null;
 var resultHint = "";
@@ -265,24 +266,43 @@ function showError(message) {
 }
 
 function setDump(name, text) {
-  dumpText = text;
-  $("dumpName").textContent = name;
   try {
     var parsed = SimCheck.parseDump(text);
+    dumpText = text;
+    sample = null;
+    $("dumpName").textContent = name;
     resultHint = parsed.wagers.length + " stakes, " + parsed.names.length + " jackpot" + (parsed.names.length === 1 ? "" : "s") + ": " + parsed.names.join(", ") + ".";
     if (appliedOption) applyOption(appliedOption);
     showError("");
   } catch (err) {
-    dumpText = "";
-    resultHint = "";
     showError(err.message);
   }
+  refreshRun();
+}
+
+function setSample(name, book) {
+  var parsed = SimCheck.parseRtpBook(book);
+  sample = parsed;
+  dumpText = "";
+  $("dumpName").textContent = name;
+  resultHint = parsed.stakes.length + " stakes, " + parsed.pools.length + " jackpot" + (parsed.pools.length === 1 ? "" : "s") + ": " + parsed.pools.map(function (pool) { return pool.id; }).join(", ") + ".";
+  if (appliedOption) applyOption(appliedOption);
+  showError("");
   refreshRun();
 }
 
 $("dumpFile").addEventListener("change", function () {
   var file = this.files && this.files[0];
   if (!file) return;
+  var lower = file.name.toLowerCase();
+  if (lower.endsWith(".xlsx")) {
+    file.arrayBuffer().then(readXlsx).then(function (book) {
+      setSample(file.name, book);
+    }).catch(function (err) {
+      showError(err.message || String(err));
+    });
+    return;
+  }
   var reader = new FileReader();
   reader.onload = function () { setDump(file.name, String(reader.result)); };
   reader.readAsText(file);
@@ -335,7 +355,8 @@ function applyOption(option) {
   $("contributionRtp").value = option.contributionRtp === null ? "" : option.contributionRtp;
   $("oddsDown").value = option.oddsDown === null ? "" : option.oddsDown;
   var names = null;
-  if (dumpText) {
+  if (sample && sample.pools.length === option.jps.length) names = sample.pools.map(function (pool) { return pool.id; });
+  else if (dumpText) {
     try { names = SimCheck.parseDump(dumpText).names; } catch (e) { names = null; }
   }
   if (!names || names.length !== option.jps.length) names = option.jps.map(function (jp) { return jp.name; });
@@ -350,8 +371,8 @@ function applyOption(option) {
 }
 
 function refreshRun() {
-  $("run").disabled = !(dumpText && appliedOption);
-  if (dumpText && appliedOption) $("runHint").textContent = resultHint;
+  $("run").disabled = !((dumpText || sample) && appliedOption);
+  if ((dumpText || sample) && appliedOption) $("runHint").textContent = resultHint;
   else if (!dumpText && !appliedOption) $("runHint").textContent = "Choose a simulation result and a PPS workbook.";
   else if (!appliedOption) $("runHint").textContent = (resultHint ? resultHint + " " : "") + "Choose a PPS workbook.";
   else $("runHint").textContent = "Choose a simulation result.";
@@ -359,6 +380,7 @@ function refreshRun() {
 
 function resetPage() {
   dumpText = "";
+  sample = null;
   lastReport = "";
   appliedOption = null;
   resultHint = "";
@@ -390,7 +412,7 @@ $("run").addEventListener("click", function () {
   showError("");
   try {
     var jps = readJps();
-    var result = SimCheck.run(dumpText, {
+    var config = {
       mainRtp: num($("mainRtp").value),
       stdDev: num($("stdDev").value),
       seedRtp: num($("seedRtp").value),
@@ -399,18 +421,28 @@ $("run").addEventListener("click", function () {
       oddsUp: jps.map(function (jp) { return num(jp.oddsUp); }),
       seeds: jps.map(function (jp) { return num(jp.seed); }),
       targets: jps.map(function (jp) { return num(jp.target); })
-    });
-    paint(result);
+    };
+    var result = sample ? SimCheck.runSample(sample, config) : SimCheck.run(dumpText, config);
+    if (result.kind === "sample") paintSample(result);
+    else paint(result);
   } catch (err) {
     showError(err.message);
   }
 });
 
-function paint(result) {
+function showResult(report) {
   $("empty").classList.add("hidden");
   $("result").classList.remove("hidden");
   $("download").disabled = false;
-  lastReport = result.report;
+  lastReport = report;
+  $("report").textContent = report;
+}
+
+function paint(result) {
+  $("stakeHeading").textContent = "By stake";
+  $("detailHeading").textContent = "Fails";
+  $("reportHeading").textContent = "Checker report";
+  showResult(result.report);
   var failClass = result.fail ? "bad" : "ok";
   $("stats").innerHTML = [
     stat(result.fail ? "FAIL" : "PASS", result.fail ? String(result.fail) : "All pass", failClass),
@@ -450,7 +482,51 @@ function paint(result) {
       return "<div><b>$" + item.wager + "</b> " + escapeHtml(c.name) + "." + actual + " " + range + ".</div>";
     }).join("");
   }
-  $("report").textContent = result.report;
+}
+
+function paintSample(result) {
+  $("stakeHeading").textContent = "By stake";
+  $("detailHeading").textContent = "Jackpots";
+  $("reportHeading").textContent = "Report";
+  showResult(result.report);
+  var s = result.summary;
+  $("stats").innerHTML = [
+    stat("Base, PPS " + pct(s.mainRtp), pct(s.baseRtp), ""),
+    stat("JP, PPS " + pct(s.jpTarget), pct(s.jpRtp), ""),
+    stat("Total, PPS " + pct(s.totalTarget), pct(s.totalRtp), ""),
+    stat("Stakes", String(result.rows.length), "")
+  ].join("");
+  var head = "<tr><th>Stake</th><th class=\"num\">Tickets</th><th class=\"num\">Base</th><th class=\"num\">JP</th>";
+  result.pools.forEach(function (pool) { head += "<th class=\"num\">" + escapeHtml(pool.id) + " hits</th>"; });
+  head += "</tr>";
+  var body = result.rows.map(function (row) {
+    var cells = "<td class=\"num\">$" + row.wager + "</td><td class=\"num\">" + Math.round(row.tickets).toLocaleString("en-US") + "</td>"
+      + "<td class=\"num\">" + pct(row.baseRtp) + "</td><td class=\"num\">" + pct(row.jpRtp) + "</td>";
+    row.pools.forEach(function (pool) {
+      cells += "<td class=\"num\">" + pool.hits + " / " + hitText(pool.expected) + "</td>";
+    });
+    return "<tr>" + cells + "</tr>";
+  }).join("");
+  var totalHits = "<tr><td>Pooled stake</td><td class=\"num\">" + Math.round(s.bet).toLocaleString("en-US") + "</td><td class=\"num\">" + pct(s.baseRtp) + "</td><td class=\"num\">" + pct(s.jpRtp) + "</td>";
+  result.pools.forEach(function (pool) {
+    totalHits += "<td class=\"num\">" + pool.hits + " / " + hitText(pool.expected) + "</td>";
+  });
+  $("wagerTable").innerHTML = head + body + totalHits + "</tr>";
+  $("fails").className = "note";
+  $("fails").innerHTML = result.pools.map(function (pool) {
+    return "<div><b>" + escapeHtml(pool.id) + "</b> paid " + pct(pool.paidRtp) + ", PPS " + pct(pool.targetRtp)
+      + " (seed " + pct(pool.seedRtp) + " + contribution " + pct(pool.contriRtp) + "). Hits " + pool.hits + ", expected " + hitText(pool.expected)
+      + ". Sheet contribution " + pct(pool.contribShare) + ".</div>";
+  }).join("") + "<div>Expected hits = tickets × stake × odds up / odds down. A stake with expected hits under 1 can sit far from the jackpot target. The pooled line is the comparison.</div>";
+}
+
+function pct(value) {
+  return (value * 100).toFixed(3) + "%";
+}
+
+function hitText(value) {
+  if (Math.abs(value - Math.round(value)) < 1e-6) return String(Math.round(value));
+  return value.toFixed(1);
 }
 
 function stat(label, value, cls) {

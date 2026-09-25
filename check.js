@@ -385,5 +385,268 @@
     return row;
   }
 
-  return { run: run, parseDump: parseDump, round: round };
+  function firstCell(row) {
+    for (var i = 0; i < row.length; i++) {
+      if (row[i] !== null && row[i] !== undefined && row[i] !== "") return { i: i, v: row[i] };
+    }
+    return null;
+  }
+
+  function cellText(value) {
+    return value === null || value === undefined ? "" : String(value).trim();
+  }
+
+  function headerIndex(row, needle) {
+    var want = needle.toLowerCase();
+    for (var i = 0; i < row.length; i++) {
+      if (cellText(row[i]).toLowerCase().indexOf(want) >= 0) return i;
+    }
+    return -1;
+  }
+
+  function stakeOf(name) {
+    var text = String(name).replace(/[$,\s]/g, "");
+    if (!/^\d+(?:\.\d+)?$/.test(text)) return null;
+    return parseFloat(text);
+  }
+
+  function parseStake(wager, rows) {
+    var tickets = null, bet = null, base = null;
+    var byId = {};
+    var mode = null;
+    var winCol = 1;
+    var amountCol = 2;
+    var seenTicket = false;
+    function pool(id) {
+      if (!id) return null;
+      if (!byId[id]) byId[id] = { id: id, paid: null, hits: null, contrib: null, reset: null, wins: [] };
+      return byId[id];
+    }
+    rows.forEach(function (row) {
+      var head = firstCell(row);
+      if (!head) { mode = null; return; }
+      var key = cellText(head.v);
+      if (key === "Ticket Number") { mode = "head"; return; }
+      if (mode === "head" && cellNumber(head.v) !== null) {
+        tickets = cellNumber(row[head.i]);
+        bet = cellNumber(row[head.i + 1]);
+        seenTicket = true;
+        mode = null;
+        return;
+      }
+      if (key === "Jackpot ID" && cellText(row[head.i + 1]) === "Jackpot Win") { mode = "jpwin"; return; }
+      if (key === "Win without jackpots") { mode = "base"; return; }
+      if (mode === "base") { base = cellNumber(head.v); mode = null; return; }
+      if (key === "Jackpot ID" && cellText(row[head.i + 1]) === "Number of Jackpots") { mode = "count"; return; }
+      if (key === "Jackpot ID" && cellText(row[head.i + 1]).toLowerCase().indexOf("contribution") >= 0) { mode = "contrib"; return; }
+      if (key === "Jackpot ID" && headerIndex(row, "jackpot amount") >= 0) {
+        mode = "end";
+        amountCol = headerIndex(row, "jackpot amount");
+        return;
+      }
+      if (key === "Jackpot Wins") { mode = null; return; }
+      if (key === "Jackpot ID" && (headerIndex(row, "total_jackpot") >= 0 || headerIndex(row, "amount") >= 0)) {
+        mode = "wins";
+        winCol = headerIndex(row, "total_jackpot");
+        if (winCol < 0) winCol = headerIndex(row, "amount");
+        return;
+      }
+      if (key === "Standard Deviation" || key === "RTP without jackpots" || key === "Jackpots RTP") { mode = null; return; }
+      if (mode === "jpwin" || mode === "count" || mode === "contrib" || mode === "end" || mode === "wins") {
+        var item = pool(key);
+        if (!item) return;
+        if (mode === "jpwin") item.paid = cellNumber(row[head.i + 1]) || 0;
+        else if (mode === "count") item.hits = cellNumber(row[head.i + 1]) || 0;
+        else if (mode === "contrib") item.contrib = cellNumber(row[head.i + 1]) || 0;
+        else if (mode === "end") item.reset = cellNumber(row[amountCol]);
+        else {
+          var amount = cellNumber(row[winCol]);
+          if (amount !== null) item.wins.push(amount);
+        }
+      }
+    });
+    if (!seenTicket || bet === null || base === null) return null;
+    Object.keys(byId).forEach(function (id) {
+      var item = byId[id];
+      if (item.paid === null) item.paid = item.wins.reduce(function (sum, value) { return sum + value; }, 0);
+      if (item.hits === null) item.hits = item.wins.length;
+      if (item.contrib === null) item.contrib = 0;
+    });
+    return { wager: wager, tickets: tickets, bet: bet, base: base, byId: byId };
+  }
+
+  function cellNumber(value) {
+    if (typeof value === "number" && isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() && isFinite(Number(value))) return Number(value);
+    return null;
+  }
+
+  function parseRtpBook(book) {
+    var stakes = [];
+    var seen = [];
+    Object.keys(book).forEach(function (name) {
+      var wager = stakeOf(name);
+      if (wager === null) return;
+      var sheet = parseStake(wager, book[name] || []);
+      if (!sheet) return;
+      stakes.push(sheet);
+      Object.keys(sheet.byId).forEach(function (id) {
+        if (seen.indexOf(id) < 0) seen.push(id);
+      });
+    });
+    if (!stakes.length) {
+      throw new Error("This workbook has no stake sheets. An rtp-test file has one sheet per stake, starting with Ticket Number.");
+    }
+    stakes.sort(function (a, b) { return a.wager - b.wager; });
+    var pools = seen.map(function (id) {
+      var reset = null;
+      stakes.forEach(function (sheet) {
+        var item = sheet.byId[id];
+        if (item && item.reset !== null) reset = item.reset;
+      });
+      return { id: id, reset: reset };
+    });
+    pools.sort(function (a, b) {
+      if (a.reset === null) return 1;
+      if (b.reset === null) return -1;
+      return a.reset - b.reset;
+    });
+    return { stakes: stakes, pools: pools };
+  }
+
+  function blankPool() {
+    return { paid: 0, hits: 0, contrib: 0 };
+  }
+
+  function runSample(sample, input) {
+    var config = buildConfig(input);
+    if (sample.pools.length !== config.numOfJPs) {
+      throw new Error("The rtp-test file has " + sample.pools.length + " jackpot(s) (" + sample.pools.map(function (pool) { return pool.id; }).join(", ") + ") and the PPS has " + config.numOfJPs + ".");
+    }
+    var used = {};
+    var paired = [];
+    for (var i = 0; i < config.numOfJPs; i++) {
+      var best = -1;
+      var bestDistance = Infinity;
+      sample.pools.forEach(function (pool, index) {
+        if (used[index] || pool.reset === null) return;
+        var distance = Math.abs(pool.reset - config.seeds[i]);
+        if (distance < bestDistance) { bestDistance = distance; best = index; }
+      });
+      if (best >= 0 && bestDistance <= 1e-6) {
+        used[best] = true;
+        paired.push(sample.pools[best]);
+      } else paired.push(null);
+    }
+    if (paired.some(function (pool) { return !pool; })) paired = sample.pools.slice();
+    var totalBet = 0;
+    var totalBase = 0;
+    var totals = paired.map(blankPool);
+    var rows = sample.stakes.map(function (sheet) {
+      totalBet += sheet.bet;
+      totalBase += sheet.base;
+      var paid = 0;
+      var pools = paired.map(function (pool, index) {
+        var item = sheet.byId[pool.id] || blankPool();
+        totals[index].paid += item.paid;
+        totals[index].hits += item.hits;
+        totals[index].contrib += item.contrib;
+        paid += item.paid;
+        return {
+          id: pool.id,
+          hits: item.hits,
+          expected: sheet.tickets * sheet.wager * config.oddsUp[index] / config.oddsDown,
+          paid: item.paid,
+          contrib: item.contrib
+        };
+      });
+      return {
+        wager: sheet.wager,
+        tickets: sheet.tickets,
+        bet: sheet.bet,
+        baseRtp: sheet.base / sheet.bet,
+        jpRtp: paid / sheet.bet,
+        pools: pools
+      };
+    });
+    var pools = paired.map(function (pool, index) {
+      var seedRtp = config.seeds[index] * config.oddsUp[index] / config.oddsDown;
+      return {
+        id: pool.id,
+        reset: pool.reset,
+        seed: config.seeds[index],
+        oddsUp: config.oddsUp[index],
+        seedRtp: seedRtp,
+        contriRtp: config.contriSplit[index],
+        targetRtp: seedRtp + config.contriSplit[index],
+        paid: totals[index].paid,
+        hits: totals[index].hits,
+        expected: totalBet * config.oddsUp[index] / config.oddsDown,
+        contrib: totals[index].contrib,
+        paidRtp: totals[index].paid / totalBet,
+        contribShare: totals[index].contrib / totalBet
+      };
+    });
+    var jpPaid = pools.reduce(function (sum, pool) { return sum + pool.paid; }, 0);
+    var summary = {
+      bet: totalBet,
+      baseRtp: totalBase / totalBet,
+      jpRtp: jpPaid / totalBet,
+      totalRtp: (totalBase + jpPaid) / totalBet,
+      mainRtp: config.defaultRTP,
+      jpTarget: config.seedRTP + config.contributionRtp,
+      totalTarget: config.defaultRTP + config.seedRTP + config.contributionRtp
+    };
+    return {
+      kind: "sample",
+      names: pools.map(function (pool) { return pool.id; }),
+      rows: rows,
+      pools: pools,
+      summary: summary,
+      report: sampleReport(summary, pools, rows, config)
+    };
+  }
+
+  function pct(value, digits) {
+    return (value * 100).toFixed(digits) + "%";
+  }
+
+  function hitText(value) {
+    if (Math.abs(value - Math.round(value)) < 1e-6) return String(Math.round(value));
+    return value.toFixed(1);
+  }
+
+  function sampleReport(summary, pools, rows, config) {
+    var lines = [];
+    lines.push("Small-sample rtp test");
+    lines.push("Stakes: " + rows.length + ", " + rows.map(function (row) { return "$" + row.wager; }).join(", "));
+    lines.push("Tickets per stake: " + rows[0].tickets);
+    lines.push("Total stake: " + summary.bet);
+    lines.push("");
+    lines.push("Pooled, paid");
+    lines.push("Base " + pct(summary.baseRtp, 3) + "    PPS " + pct(summary.mainRtp, 3));
+    lines.push("JP   " + pct(summary.jpRtp, 3) + "    PPS " + pct(summary.jpTarget, 3));
+    lines.push("Total " + pct(summary.totalRtp, 3) + "    PPS " + pct(summary.totalTarget, 3));
+    lines.push("");
+    lines.push("Jackpots, matched by reset amount");
+    pools.forEach(function (pool, index) {
+      lines.push("JP" + index + " " + pool.id + "    reset " + pool.reset + "    PPS seed " + pool.seed);
+      lines.push("  Paid " + pct(pool.paidRtp, 3) + "    target " + pct(pool.targetRtp, 3) + " (seed " + pct(pool.seedRtp, 3) + " + contribution " + pct(pool.contriRtp, 3) + ")");
+      lines.push("  Hits " + pool.hits + "    expected " + hitText(pool.expected));
+      lines.push("  Contribution on the sheets " + pct(pool.contribShare, 3));
+    });
+    lines.push("");
+    lines.push("Expected hits = tickets x stake x odds up / " + config.oddsDown + ".");
+    lines.push("A stake whose expected hits are under 1 can print a jackpot RTP far from the target. The pooled line is the comparison.");
+    lines.push("");
+    lines.push("Stake    Base       JP         " + pools.map(function (pool) { return pool.id; }).join("    "));
+    rows.forEach(function (row) {
+      lines.push("$" + row.wager + "    " + pct(row.baseRtp, 2) + "    " + pct(row.jpRtp, 2) + "    " + row.pools.map(function (pool) {
+        return pool.hits + "/" + hitText(pool.expected);
+      }).join("    "));
+    });
+    return lines.join("\n") + "\n";
+  }
+
+  return { run: run, parseDump: parseDump, parseRtpBook: parseRtpBook, runSample: runSample, round: round };
 });
