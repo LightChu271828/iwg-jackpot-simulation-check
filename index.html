@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>IWG Jackpot simulation check</title>
-<meta name="description" content="Check an egames jackpot simulation dump against PPS settings. Runs in the browser." />
+<meta name="description" content="Check an egames jackpot simulation result against a PPS workbook. Runs in the browser." />
 <style>
   :root {
     --bg: #ffffff;
@@ -78,6 +78,7 @@
     background: var(--bg); color: var(--text);
   }
   input:focus { outline: none; border-color: var(--accent); }
+  input[readonly] { background: var(--bg-soft); color: var(--text); }
   .hint { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
   .files { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 720px) { .files { grid-template-columns: 1fr; } }
@@ -121,12 +122,12 @@
     <div>
       <h1>IWG Jackpot simulation check</h1>
       <p style="margin:0">
-        Upload an egames jackpot dump and the PPS settings. The page runs the same checks as the Java checker.
-        Nothing is uploaded. A small-sample rtp-test workbook is not this file.
+        Upload an egames simulation result and its PPS workbook. Settings come from the workbook.
+        The page runs the same checks as the Java checker. Nothing is uploaded.
       </p>
     </div>
     <div class="btnrow">
-      <button id="download" disabled>Download report</button>
+      <button id="reset" type="button">Reset</button>
     </div>
   </div>
 
@@ -135,14 +136,14 @@
     <div class="panel-b">
       <div class="files">
         <div class="drop" id="dumpDrop">
-          <strong>Simulation dump</strong>
+          <strong>Simulation result</strong>
           <span class="hint">The egames .txt report, one block per stake.</span>
           <div class="name" id="dumpName">No file yet</div>
           <label class="filebtn" style="display:inline-block;margin-top:8px">Choose file<input id="dumpFile" type="file" accept=".txt,text/plain" /></label>
         </div>
         <div class="drop" id="ppsDrop">
           <strong>PPS workbook</strong>
-          <span class="hint">Optional. Fills the fields below from Summary and Progressive Jackpots. Check them before running.</span>
+          <span class="hint">Settings are read from Summary and Progressive Jackpots.</span>
           <div class="name" id="ppsName">No file yet</div>
           <label class="filebtn" style="display:inline-block;margin-top:8px">Choose file<input id="ppsFile" type="file" accept=".xlsx" /></label>
         </div>
@@ -154,14 +155,16 @@
 
   <h2>Settings</h2>
   <div class="panel">
-    <div class="panel-h"><span>Same arguments as the checker</span><span>Small JP to large JP, in file order</span></div>
+    <div class="panel-h"><span>From the PPS workbook</span><span>Small JP to large JP, in file order</span></div>
     <div class="panel-b">
+      <div id="settingsEmpty" class="note">Load a PPS workbook. Main game RTP, standard deviation, seed, contribution, and the jackpot rows are taken from that file.</div>
+      <div id="settingsBody" class="hidden">
       <div class="controls">
-        <label class="field"><span><b>Main game RTP</b></span><input id="mainRtp" type="number" step="any" value="0.83" /></label>
-        <label class="field"><span><b>Std. Dev.</b></span><input id="stdDev" type="number" step="any" value="4.22" /></label>
-        <label class="field"><span><b>Seed RTP</b></span><input id="seedRtp" type="number" step="any" value="0.004" /></label>
-        <label class="field"><span><b>Contribution RTP</b></span><input id="contributionRtp" type="number" step="any" value="0.036" /></label>
-        <label class="field"><span><b>Odds down</b></span><input id="oddsDown" type="number" step="any" value="50000000" /></label>
+        <label class="field"><span><b>Main game RTP</b></span><input id="mainRtp" type="text" readonly /></label>
+        <label class="field"><span><b>Std. Dev.</b></span><input id="stdDev" type="text" readonly /></label>
+        <label class="field"><span><b>Seed RTP</b></span><input id="seedRtp" type="text" readonly /></label>
+        <label class="field"><span><b>Contribution RTP</b></span><input id="contributionRtp" type="text" readonly /></label>
+        <label class="field"><span><b>Odds down</b></span><input id="oddsDown" type="text" readonly /></label>
       </div>
       <div class="scroll" style="margin-top:14px">
         <table class="jp-table">
@@ -177,9 +180,10 @@
         </table>
       </div>
       <div class="hint">Trigger target is the expected prize, not the expected hit count. Expected JPx Wins in the report is this target and is not a scored test.</div>
+      </div>
       <div class="runrow">
         <button class="primary" id="run" disabled>Run check</button>
-        <span class="hint" id="runHint">Choose a dump first.</span>
+        <span class="hint" id="runHint">Choose a simulation result and a PPS workbook.</span>
       </div>
     </div>
   </div>
@@ -197,19 +201,22 @@
     <h2>Checker report</h2>
     <div class="report" id="report"></div>
   </div>
+  <div class="btnrow" style="margin-top:16px">
+    <button id="download" type="button" disabled>Download report</button>
+  </div>
 </div>
 <script src="check.js"></script>
 <script>
 var dumpText = "";
 var lastReport = "";
-var jpCount = 2;
+var appliedOption = null;
+var resultHint = "";
 
 function $(id) { return document.getElementById(id); }
 
 function renderJpRows(names) {
   var old = readJps();
-  var n = names ? names.length : Math.max(old.length, 2);
-  jpCount = n;
+  var n = names ? names.length : old.length;
   var body = $("jpRows");
   body.innerHTML = "";
   for (var i = 0; i < n; i++) {
@@ -225,7 +232,7 @@ function renderJpRows(names) {
 }
 
 function numCell(kind, value) {
-  return '<td class="num"><input data-kind="' + kind + '" type="text" inputmode="decimal" value="' + escapeHtml(value === undefined || value === null ? "" : String(value)) + '" /></td>';
+  return '<td class="num"><input data-kind="' + kind + '" type="text" readonly value="' + escapeHtml(value === undefined || value === null ? "" : String(value)) + '" /></td>';
 }
 
 function escapeHtml(text) {
@@ -262,15 +269,15 @@ function setDump(name, text) {
   $("dumpName").textContent = name;
   try {
     var parsed = SimCheck.parseDump(text);
-    renderJpRows(parsed.names);
-    $("run").disabled = false;
-    $("runHint").textContent = parsed.wagers.length + " stakes, " + parsed.names.length + " jackpot" + (parsed.names.length === 1 ? "" : "s") + ": " + parsed.names.join(", ") + ".";
+    resultHint = parsed.wagers.length + " stakes, " + parsed.names.length + " jackpot" + (parsed.names.length === 1 ? "" : "s") + ": " + parsed.names.join(", ") + ".";
+    if (appliedOption) applyOption(appliedOption);
     showError("");
   } catch (err) {
-    $("run").disabled = true;
-    $("runHint").textContent = "This dump could not be read.";
+    dumpText = "";
+    resultHint = "";
     showError(err.message);
   }
+  refreshRun();
 }
 
 $("dumpFile").addEventListener("change", function () {
@@ -290,7 +297,11 @@ $("ppsFile").addEventListener("change", function () {
     var box = $("ppsChoices");
     box.innerHTML = "";
     if (!options.length) {
-      $("ppsNote").textContent = "Could not find jackpot rows on Progressive Jackpots. Type the settings in.";
+      appliedOption = null;
+      $("settingsBody").classList.add("hidden");
+      $("settingsEmpty").classList.remove("hidden");
+      $("ppsNote").textContent = "Could not find jackpot rows on Progressive Jackpots.";
+      refreshRun();
       return;
     }
     options.forEach(function (option, index) {
@@ -298,24 +309,31 @@ $("ppsFile").addEventListener("change", function () {
       button.type = "button";
       button.textContent = option.label;
       if (index === 0) button.className = "primary";
-      button.addEventListener("click", function () { applyOption(option); });
+      button.addEventListener("click", function () {
+        box.querySelectorAll("button").forEach(function (item) { item.className = ""; });
+        button.className = "primary";
+        applyOption(option);
+      });
       box.appendChild(button);
     });
     applyOption(options[0]);
     $("ppsNote").textContent = options.length > 1
-      ? "This workbook has more than one jackpot block. The first one is filled in. Switch blocks if this game is the other column."
-      : "Fields filled from the workbook. They follow the sheet order, which needs to match the dump.";
+      ? "This workbook has more than one jackpot block. Settings are the first block. Switch if this game is the other column."
+      : "Settings are this workbook, in sheet order. That order needs to match the simulation result.";
   }).catch(function (err) {
     $("ppsNote").textContent = err.message || String(err);
   });
 });
 
 function applyOption(option) {
-  if (option.mainRtp !== null) $("mainRtp").value = option.mainRtp;
-  if (option.stdDev !== null) $("stdDev").value = option.stdDev;
-  if (option.seedRtp !== null) $("seedRtp").value = option.seedRtp;
-  if (option.contributionRtp !== null) $("contributionRtp").value = option.contributionRtp;
-  if (option.oddsDown !== null) $("oddsDown").value = option.oddsDown;
+  appliedOption = option;
+  $("settingsEmpty").classList.add("hidden");
+  $("settingsBody").classList.remove("hidden");
+  $("mainRtp").value = option.mainRtp === null ? "" : option.mainRtp;
+  $("stdDev").value = option.stdDev === null ? "" : option.stdDev;
+  $("seedRtp").value = option.seedRtp === null ? "" : option.seedRtp;
+  $("contributionRtp").value = option.contributionRtp === null ? "" : option.contributionRtp;
+  $("oddsDown").value = option.oddsDown === null ? "" : option.oddsDown;
   var names = null;
   if (dumpText) {
     try { names = SimCheck.parseDump(dumpText).names; } catch (e) { names = null; }
@@ -328,7 +346,45 @@ function applyOption(option) {
     inputs[1].value = jp.seed;
     inputs[2].value = jp.target;
   });
+  refreshRun();
 }
+
+function refreshRun() {
+  $("run").disabled = !(dumpText && appliedOption);
+  if (dumpText && appliedOption) $("runHint").textContent = resultHint;
+  else if (!dumpText && !appliedOption) $("runHint").textContent = "Choose a simulation result and a PPS workbook.";
+  else if (!appliedOption) $("runHint").textContent = (resultHint ? resultHint + " " : "") + "Choose a PPS workbook.";
+  else $("runHint").textContent = "Choose a simulation result.";
+}
+
+function resetPage() {
+  dumpText = "";
+  lastReport = "";
+  appliedOption = null;
+  resultHint = "";
+  $("dumpFile").value = "";
+  $("ppsFile").value = "";
+  $("dumpName").textContent = "No file yet";
+  $("ppsName").textContent = "No file yet";
+  $("ppsChoices").innerHTML = "";
+  $("ppsNote").textContent = "";
+  ["mainRtp", "stdDev", "seedRtp", "contributionRtp", "oddsDown"].forEach(function (id) { $(id).value = ""; });
+  $("jpRows").innerHTML = "";
+  $("settingsBody").classList.add("hidden");
+  $("settingsEmpty").classList.remove("hidden");
+  $("result").classList.add("hidden");
+  $("empty").classList.remove("hidden");
+  $("stats").innerHTML = "";
+  $("wagerTable").innerHTML = "";
+  $("fails").className = "note";
+  $("fails").textContent = "None.";
+  $("report").textContent = "";
+  $("download").disabled = true;
+  showError("");
+  refreshRun();
+}
+
+$("reset").addEventListener("click", resetPage);
 
 $("run").addEventListener("click", function () {
   showError("");
@@ -420,7 +476,7 @@ $("download").addEventListener("click", function () {
   URL.revokeObjectURL(url);
 });
 
-renderJpRows(["", ""]);
+refreshRun();
 
 function cellNum(value) {
   if (typeof value === "number" && isFinite(value)) return value;
