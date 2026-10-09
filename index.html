@@ -821,24 +821,42 @@ async function unzip(buffer) {
   var files = {};
   var offset = 0;
   while (offset + 30 < bytes.length && view.getUint32(offset, true) === 0x04034b50) {
+    var flags = view.getUint16(offset + 6, true);
     var method = view.getUint16(offset + 8, true);
     var compSize = view.getUint32(offset + 18, true);
     var nameLen = view.getUint16(offset + 26, true);
     var extraLen = view.getUint16(offset + 28, true);
     var name = new TextDecoder().decode(bytes.subarray(offset + 30, offset + 30 + nameLen));
     var start = offset + 30 + nameLen + extraLen;
+    var descriptor = 0;
+    if (flags & 8) {
+      var found = -1;
+      for (var i = start; i + 16 <= bytes.length; i++) {
+        if (view.getUint32(i, true) !== 0x08074b50) continue;
+        var size = view.getUint32(i + 8, true);
+        if (i === start + size) { found = size; break; }
+      }
+      if (found < 0) throw new Error("Could not read " + name);
+      compSize = found;
+      descriptor = 16;
+    }
     var slice = bytes.subarray(start, start + compSize);
     if (method === 0) files[name] = new TextDecoder().decode(slice);
     else if (method === 8) files[name] = new TextDecoder().decode(await inflate(slice));
-    offset = start + compSize;
+    else throw new Error("Could not read " + name);
+    offset = start + compSize + descriptor;
   }
   return files;
 }
 
 async function inflate(bytes) {
   if (typeof DecompressionStream !== "function") throw new Error("This browser cannot read xlsx");
-  var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  try {
+    var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  } catch (err) {
+    throw new Error("Could not read this xlsx");
+  }
 }
 </script>
 </body>
